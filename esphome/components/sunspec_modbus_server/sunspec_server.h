@@ -17,7 +17,7 @@
 namespace esphome {
 namespace sunspec_modbus_server {
 
-// SunSpec Operating States (Model 103)
+// SunSpec Operating States (Model 101/103)
 enum class InverterState : uint16_t {
   OFF = 1,
   SLEEPING = 2,
@@ -89,6 +89,9 @@ namespace Model120 {
 }  // namespace Model120
 
 // Model 103 register offsets (relative to MODEL103_DATA_OFFSET)
+// Also used for Model 101 (single-phase) — Venus OS reads at fixed 103 offsets
+// regardless of model ID, so the physical layout is always 103. For single-phase,
+// Phase B/C registers are set to 0 (not NaN, since 0xFFFF triggers NaN fallback).
 namespace Model103 {
   static const uint8_t A = 0;        // AC Total Current
   static const uint8_t AphA = 1;     // Phase A Current
@@ -219,6 +222,7 @@ class SunSpecModbusServer : public Component {
   void set_version(const std::string &version) { this->version_ = version; }
   void set_update_interval(uint32_t update_interval) { this->update_interval_ = update_interval; }
   void set_max_power(uint16_t max_power) { this->max_power_ = max_power; }
+  void set_phases(uint8_t phases) { this->phases_ = phases; }
 
   // Source sensor setters (input from external components like modbus_controller)
   void set_source_ac_power(sensor::Sensor *sensor) { this->source_ac_power_ = sensor; }
@@ -290,6 +294,7 @@ class SunSpecModbusServer : public Component {
   std::string version_{"1.0.0"};
   uint32_t update_interval_{1000};
   uint16_t max_power_{9000};
+  uint8_t phases_{3};
 
   // Server state
   WiFiServer *server_{nullptr};

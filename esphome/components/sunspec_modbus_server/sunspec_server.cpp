@@ -86,6 +86,7 @@ void SunSpecModbusServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Model: %s", this->model_.c_str());
   ESP_LOGCONFIG(TAG, "  Serial: %s", this->serial_.c_str());
   ESP_LOGCONFIG(TAG, "  Update Interval: %u ms", this->update_interval_);
+  ESP_LOGCONFIG(TAG, "  Phases: %u", this->phases_);
 }
 
 void SunSpecModbusServer::start_server_() {
@@ -394,8 +395,14 @@ void SunSpecModbusServer::init_registers_() {
   this->registers_[MODEL120_DATA_OFFSET + Model120::VArRtgQ3] = 0;
   this->registers_[MODEL120_DATA_OFFSET + Model120::VArRtgQ4] = 0;
   this->registers_[MODEL120_DATA_OFFSET + Model120::VArRtg_SF] = 0;
-  // ARtg: max current sum of 3 phases = WRtg / (sqrt(3) * 400V) * 3
-  this->registers_[MODEL120_DATA_OFFSET + Model120::ARtg]     = (uint16_t)(this->max_power_ / 230.94f);
+  // ARtg: max current sum of phases
+  // 3-phase: WRtg / (sqrt(3) * 400V) * 3 = WRtg / 230.94
+  // single-phase: WRtg / 230V
+  if (this->phases_ == 1) {
+    this->registers_[MODEL120_DATA_OFFSET + Model120::ARtg]     = (uint16_t)(this->max_power_ / 230.0f);
+  } else {
+    this->registers_[MODEL120_DATA_OFFSET + Model120::ARtg]     = (uint16_t)(this->max_power_ / 230.94f);
+  }
   this->registers_[MODEL120_DATA_OFFSET + Model120::ARtg_SF]  = 0;
   this->registers_[MODEL120_DATA_OFFSET + Model120::PFRtgQ1]  = (uint16_t)(int16_t)100;  // 1.00 with SF=-2
   this->registers_[MODEL120_DATA_OFFSET + Model120::PFRtgQ2]  = 0;
@@ -404,11 +411,17 @@ void SunSpecModbusServer::init_registers_() {
   this->registers_[MODEL120_DATA_OFFSET + Model120::PFRtg_SF] = (uint16_t)(int16_t)(-2);
   // Optional storage fields (17-25) left as 0 — not applicable for PV
 
-  // Model 103 header (Three-Phase Inverter)
-  this->registers_[MODEL103_ID_OFFSET] = 103;       // Model ID
-  this->registers_[MODEL103_LENGTH_OFFSET] = MODEL103_LENGTH;  // Length
+  // Model 101/103 header
+  // Model 101 (single-phase) or 103 (three-phase). Both share the same
+  // physical register layout (we use Model 103 offsets for everything).
+  // Venus OS reads registers at fixed Model-103 offsets regardless of the
+  // model ID — it only uses the model ID to determine phaseCount.
+  // For single-phase: phaseCount=1 + Position=L1 on Venus OS → all data on L1.
+  uint16_t inverter_model_id = (this->phases_ == 1) ? 101 : 103;
+  this->registers_[MODEL103_ID_OFFSET] = inverter_model_id;
+  this->registers_[MODEL103_LENGTH_OFFSET] = MODEL103_LENGTH;
 
-  // Model 103 scale factors (set once, don't change)
+  // Model 101/103 scale factors (set once, don't change)
   this->registers_[MODEL103_DATA_OFFSET + Model103::A_SF] = (uint16_t)(int16_t)(-2);   // Current: 0.01A resolution
   this->registers_[MODEL103_DATA_OFFSET + Model103::V_SF] = (uint16_t)(int16_t)(-1);   // Voltage: 0.1V resolution
   this->registers_[MODEL103_DATA_OFFSET + Model103::W_SF] = 0;                          // Power: 1W resolution
@@ -462,27 +475,46 @@ void SunSpecModbusServer::init_registers_() {
   this->registers_[END_MODEL_OFFSET] = 0xFFFF;
   this->registers_[END_MODEL_OFFSET + 1] = 0;
 
-  ESP_LOGI(TAG, "SunSpec registers initialized");
+  ESP_LOGI(TAG, "SunSpec registers initialized (Model %d, %d-phase)", inverter_model_id, this->phases_);
 }
 
 void SunSpecModbusServer::update_registers_() {
-  // Update Model 103 registers with current simulated values
+  // Update Model 103 registers with current values
 
-  // AC Current (scale factor -2, so multiply by 100)
-  this->registers_[MODEL103_DATA_OFFSET + Model103::A]    = safe_u16(this->values_.ac_current_total * 100);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::AphA] = safe_u16(this->values_.ac_current_a * 100);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::AphB] = safe_u16(this->values_.ac_current_b * 100);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::AphC] = safe_u16(this->values_.ac_current_c * 100);
+  if (this->phases_ == 1) {
+    // Single-phase: only Phase A is active; Phase B/C set to 0
+    // NOTE: Must use 0 not 0xFFFF here — Venus OS interprets 0xFFFF as NaN
+    // and the 3-phase energy distribution falls through to Phase A values.
+    // With Model 101 + Position=L1 on Venus OS, all data goes to L1 only.
+    this->registers_[MODEL103_DATA_OFFSET + Model103::A]      = safe_u16(this->values_.ac_current_a * 100);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::AphA]   = safe_u16(this->values_.ac_current_a * 100);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::AphB]   = 0;
+    this->registers_[MODEL103_DATA_OFFSET + Model103::AphC]   = 0;
 
-  // Line voltages (phase-to-phase, scale factor -1, multiply by 10)
-  this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphAB] = safe_u16(this->values_.line_voltage_ab * 10);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphBC] = safe_u16(this->values_.line_voltage_bc * 10);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphCA] = safe_u16(this->values_.line_voltage_ca * 10);
+    // Line-to-line voltages: not applicable for single-phase
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphAB] = 0;
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphBC] = 0;
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphCA] = 0;
 
-  // Phase voltages (phase-to-neutral, scale factor -1, multiply by 10)
-  this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphA] = safe_u16(this->values_.ac_voltage_a * 10);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphB] = safe_u16(this->values_.ac_voltage_b * 10);
-  this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphC] = safe_u16(this->values_.ac_voltage_c * 10);
+    // Phase voltage: only Phase A is populated
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphA] = safe_u16(this->values_.ac_voltage_a * 10);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphB] = 0;
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphC] = 0;
+  } else {
+    // Three-phase: populate all phases
+    this->registers_[MODEL103_DATA_OFFSET + Model103::A]      = safe_u16(this->values_.ac_current_total * 100);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::AphA]   = safe_u16(this->values_.ac_current_a * 100);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::AphB]   = safe_u16(this->values_.ac_current_b * 100);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::AphC]   = safe_u16(this->values_.ac_current_c * 100);
+
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphAB] = safe_u16(this->values_.line_voltage_ab * 10);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphBC] = safe_u16(this->values_.line_voltage_bc * 10);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PPVphCA] = safe_u16(this->values_.line_voltage_ca * 10);
+
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphA] = safe_u16(this->values_.ac_voltage_a * 10);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphB] = safe_u16(this->values_.ac_voltage_b * 10);
+    this->registers_[MODEL103_DATA_OFFSET + Model103::PhVphC] = safe_u16(this->values_.ac_voltage_c * 10);
+  }
 
   // AC Power (scale factor 0)
   this->registers_[MODEL103_DATA_OFFSET + Model103::W] = safe_u16(this->values_.ac_power);
@@ -620,9 +652,16 @@ void SunSpecModbusServer::update_from_sources_() {
   }
 
   // Calculate line voltages from phase voltages (phase-to-phase = phase * sqrt(3))
-  this->values_.line_voltage_ab = this->values_.ac_voltage_a * 1.732f;
-  this->values_.line_voltage_bc = this->values_.ac_voltage_b * 1.732f;
-  this->values_.line_voltage_ca = this->values_.ac_voltage_c * 1.732f;
+  // Only applicable for three-phase; for single-phase, set to 0 (written as NaN in registers)
+  if (this->phases_ == 3) {
+    this->values_.line_voltage_ab = this->values_.ac_voltage_a * 1.732f;
+    this->values_.line_voltage_bc = this->values_.ac_voltage_b * 1.732f;
+    this->values_.line_voltage_ca = this->values_.ac_voltage_c * 1.732f;
+  } else {
+    this->values_.line_voltage_ab = 0;
+    this->values_.line_voltage_bc = 0;
+    this->values_.line_voltage_ca = 0;
+  }
 
   // Phase currents
   if (this->source_current_a_ != nullptr && this->source_current_a_->has_state()) {
