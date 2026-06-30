@@ -34,6 +34,7 @@ CONF_MODEL = "model"
 CONF_SERIAL = "serial"
 CONF_VERSION = "version"
 CONF_MAX_POWER = "max_power"
+CONF_PHASES = "phases"
 
 # Source sensor configuration keys (input from external sensors like modbus_controller)
 CONF_SOURCE_AC_POWER = "source_ac_power"
@@ -88,6 +89,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_VERSION, default="1.0.0"): cv.string,
         cv.Optional(CONF_MAX_POWER, default=9000): cv.int_range(min=1, max=65535),
         cv.Optional(CONF_UPDATE_INTERVAL, default="1s"): cv.update_interval,
+        cv.Optional(CONF_PHASES, default=3): cv.int_range(min=1, max=3),
         # Source sensors (input from external components like modbus_controller)
         cv.Optional(CONF_SOURCE_AC_POWER): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_SOURCE_VOLTAGE_A): cv.use_id(sensor.Sensor),
@@ -218,6 +220,7 @@ async def to_code(config):
     cg.add(var.set_serial(config[CONF_SERIAL]))
     cg.add(var.set_version(config[CONF_VERSION]))
     cg.add(var.set_max_power(config[CONF_MAX_POWER]))
+    cg.add(var.set_phases(config[CONF_PHASES]))
     cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
 
     # Register source sensors (input from external components)
