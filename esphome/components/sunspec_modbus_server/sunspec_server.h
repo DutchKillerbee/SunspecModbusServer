@@ -14,6 +14,10 @@
 #include <vector>
 #include <memory>
 
+namespace modbus_controller {
+class ModbusController;
+}
+
 namespace esphome {
 namespace sunspec_modbus_server {
 
@@ -247,6 +251,10 @@ class SunSpecModbusServer : public Component {
   // Power limit number setter (target for Growatt active power rate)
   void set_power_limit_number(number::Number *number) { this->power_limit_number_ = number; }
 
+  // Direct Modbus register write for power limit
+  void set_modbus_controller(modbus_controller::ModbusController *c) { this->modbus_controller_ = c; }
+  void set_power_limit_register(uint16_t reg) { this->power_limit_register_ = reg; }
+
   // Output sensor setters (publish to Home Assistant)
   void set_ac_power_sensor(sensor::Sensor *sensor) { this->ac_power_sensor_ = sensor; }
   void set_ac_voltage_a_sensor(sensor::Sensor *sensor) { this->ac_voltage_a_sensor_ = sensor; }
@@ -333,6 +341,10 @@ class SunSpecModbusServer : public Component {
 
   // Power limit number (target for Growatt active power rate)
   number::Number *power_limit_number_{nullptr};
+
+  // Direct Modbus register write for power limit
+  modbus_controller::ModbusController *modbus_controller_{nullptr};
+  uint16_t power_limit_register_{0};
 
   // Source sensors (input from external components like modbus_controller)
   sensor::Sensor *source_ac_power_{nullptr};

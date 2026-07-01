@@ -29,6 +29,8 @@ AUTO_LOAD = ["sensor", "number"]
 
 CONF_UNIT_ID = "unit_id"
 CONF_TARGET_POWER_LIMIT = "target_power_limit"
+CONF_MODBUS_CONTROLLER_ID = "modbus_controller_id"
+CONF_POWER_LIMIT_REGISTER = "power_limit_register"
 CONF_MANUFACTURER = "manufacturer"
 CONF_MODEL = "model"
 CONF_SERIAL = "serial"
@@ -75,6 +77,9 @@ CONF_TEMPERATURE = "temperature"
 
 sunspec_modbus_server_ns = cg.esphome_ns.namespace("sunspec_modbus_server")
 SunSpecModbusServer = sunspec_modbus_server_ns.class_("SunSpecModbusServer", cg.Component)
+
+modbus_controller_ns = cg.esphome_ns.namespace("modbus_controller")
+ModbusController = modbus_controller_ns.class_("ModbusController")
 
 SENSOR_SCHEMA = sensor.sensor_schema()
 
@@ -200,6 +205,9 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         # Power limit number (target for Growatt active power rate via Model 123)
         cv.Optional(CONF_TARGET_POWER_LIMIT): cv.use_id(number.Number),
+        # Direct Modbus register write (write WMaxLimPct directly to an inverter RS485 register)
+        cv.Optional(CONF_MODBUS_CONTROLLER_ID): cv.use_id(ModbusController),
+        cv.Optional(CONF_POWER_LIMIT_REGISTER): cv.uint16_t,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -360,3 +368,10 @@ async def to_code(config):
     if CONF_TARGET_POWER_LIMIT in config:
         num = await cg.get_variable(config[CONF_TARGET_POWER_LIMIT])
         cg.add(var.set_power_limit_number(num))
+
+    # Direct Modbus register write path for power limit
+    if CONF_MODBUS_CONTROLLER_ID in config:
+        ctrl = await cg.get_variable(config[CONF_MODBUS_CONTROLLER_ID])
+        cg.add(var.set_modbus_controller(ctrl))
+    if CONF_POWER_LIMIT_REGISTER in config:
+        cg.add(var.set_power_limit_register(config[CONF_POWER_LIMIT_REGISTER]))

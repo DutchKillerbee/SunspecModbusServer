@@ -1,6 +1,7 @@
 #include "sunspec_server.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include "esphome/components/modbus_controller/modbus_controller.h"
 
 #include <cstring>
 #include <cmath>
@@ -71,6 +72,12 @@ void SunSpecModbusServer::loop() {
       auto call = this->power_limit_number_->make_call();
       call.set_value(100.0f);
       call.perform();
+    }
+    if (this->modbus_controller_ != nullptr && this->power_limit_register_ > 0) {
+      ESP_LOGW(TAG, "Revert timer — writing 100%% to Modbus register %u", this->power_limit_register_);
+      auto cmd = modbus_controller::ModbusCommandItem::create_write_single_command(
+          this->modbus_controller_, this->power_limit_register_, 100);
+      this->modbus_controller_->queue_command(cmd);
     }
   }
 
@@ -360,6 +367,16 @@ void SunSpecModbusServer::process_write_(uint16_t reg_start, uint16_t reg_count)
     auto call = this->power_limit_number_->make_call();
     call.set_value(target);
     call.perform();
+  }
+
+  // Write directly to inverter Modbus register if configured
+  if (this->modbus_controller_ != nullptr && this->power_limit_register_ > 0) {
+    uint16_t target = (ena == 0) ? 100 : (uint16_t)(pct + 0.5f);
+    if (target > 100) target = 100;
+    ESP_LOGI(TAG, "Model123: writing power limit %u%% to Modbus register %u", target, this->power_limit_register_);
+    auto cmd = modbus_controller::ModbusCommandItem::create_write_single_command(
+        this->modbus_controller_, this->power_limit_register_, target);
+    this->modbus_controller_->queue_command(cmd);
   }
 }
 
